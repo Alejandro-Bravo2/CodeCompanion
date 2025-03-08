@@ -8,45 +8,95 @@ import os
 import threading
 import ast
 import re
-from openai import OpenAI  # Usamos el cliente de LM Studio
+import openai   # Usamos el cliente de LM Studio
 
 # Clase para gestionar las solicitudes a la IA
 class DeepSeekDocumenter:
     def __init__(self):
         try:
-            self.client = OpenAI(
-                base_url="http://localhost:1234/v1",
-                api_key="deepseek-r1-distill-llama-8b"
-            )
+            openai.api_base = "http://localhost:1234/v1"
+            openai.api_key = "llama-3.2-1b-instruct"
+            self.client = openai
         except Exception as e:
             raise ValueError(f"Error al inicializar OpenAI: {e}")
 
     def generate_documentation(self, user_input, code):
         """
-        Genera documentación o análisis basados en el código y
-        el input adicional ofrecido por el usuario.
+        Genera documentación del código agregando comentarios claros y concisos en cada función, clase y método.
+        La respuesta contendrá únicamente el código documentado, sin explicaciones adicionales.
         """
-        max_length = 3000
+        max_length = 12000
         truncated_code = code if len(code) <= max_length else code[:max_length] + "\n... [truncated]"
         language_note = ""
         if "package " in code or "class " in code:
             language_note = "Nota: El código está escrito en Kotlin. "
         prompt = (
             f"{language_note}"
-            "Genera únicamente el resultado final de una documentación resumida, clara y precisa en español para el siguiente código, "
-            "sin incluir ningún bloque de chain-of-thought ni razonamiento interno, y sin agregar información que no aparezca en el código:\n\n"
-            f"{truncated_code}\nDescripción adicional: {user_input}"
+            """
+            “Eres un generador de documentación para código Python, kotlin o cualquier lenguaje. Tu tarea es analizar el siguiente código y devolver el mismo código sin interrupciones, pero agregando docstrings a cada función, método y clase. Asegúrate de documentar de manera clara y detallada el propósito de cada elemento, incluyendo la descripción de cada parámetro (con su tipo correspondiente) y, en su caso, el valor de retorno. No incluyas comentarios adicionales fuera de los docstrings. Usa el siguiente ejemplo como guía:
+
+python
+Copiar
+Editar
+def _filtrar_documentacion(self, doc):
+    <<DOC>>
+    Filtra información adicional innecesaria del documento de documentación.
+
+    Args:
+        doc (str): La documentación a filtrar.
+
+    Returns:
+        str: La documentación filtrada, sin espacios al inicio o al final.
+    <<DOC>>
+    return doc.strip()
+
+def _traducir_documentacion(self, doc):
+    <<DOC>>
+    Traduce la documentación al español en caso de ser necesario.
+
+    Se asume que la documentación ya viene en español.
+
+    Args:
+        doc (str): La documentación a traducir.
+
+    Returns:
+        str: La documentación traducida.
+    <<DOC>>
+    return doc
+
+def _mostrar_resultado(title, content, parent=None):
+    <<DOC>>
+    Muestra el contenido proporcionado en una ventana nueva.
+
+    Se crea una ventana hija (Toplevel) con un área de texto desplazable que contiene el contenido.
+
+    Args:
+        title (str): Título de la ventana.
+        content (str): Contenido a mostrar en la ventana.
+        parent (tk.Widget, opcional): Widget padre para la ventana. Si no se especifica, se utiliza el widget raíz predeterminado.
+    <<DOC>>
+    if parent is None:
+        parent = tk._get_default_root()
+    result_window = tk.Toplevel(parent)
+    result_window.title(title)
+    st = scrolledtext.ScrolledText(result_window, width=80, height=30)
+    st.pack(expand=True, fill='both')
+    st.insert(tk.END, content)
+Por favor, documenta todo el código que se te proporcione siguiendo exactamente este formato, sin interrupciones ni explicaciones adicionales, solo el código modificado con los docstrings correspondientes.”
+            """
+            f"{truncated_code}"
+            "\n\nDescripción adicional: " + user_input
         )
         messages = [
             {"role": "system", "content": "Eres un asistente útil."},
             {"role": "user", "content": prompt}
         ]
         try:
-            completion = self.client.chat.completions.create(
+            completion = self.client.ChatCompletion.create(
                 model="deepseek-r1-llama-8b",
                 messages=messages,
                 temperature=0.7,
-                max_tokens=3000
+                max_tokens=12000
             )
             documented_code = completion.choices[0].message.content
             return self._traducir_documentacion(self._filtrar_documentacion(documented_code))
@@ -63,8 +113,10 @@ class DeepSeekDocumenter:
         return doc
 
 # Función para mostrar resultados en una única ventana
-def _mostrar_resultado(title, content):
-    result_window = tk.Toplevel(root)
+def _mostrar_resultado(title, content, parent=None):
+    if parent is None:
+        parent = tk._get_default_root()
+    result_window = tk.Toplevel(parent)
     result_window.title(title)
     st = scrolledtext.ScrolledText(result_window, width=80, height=30)
     st.pack(expand=True, fill='both')
