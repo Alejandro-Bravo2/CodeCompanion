@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import simpledialog, ttk, scrolledtext
-import tkinter.messagebox as messagebox  # Importar messagebox de esta forma (para evitar conflictos)
+import tkinter.messagebox as messagebox 
 import tkinter.font as tkFont
 from pynput import keyboard
 import json
@@ -8,7 +8,8 @@ import os
 import threading
 import ast
 import re
-import openai   # Usamos el cliente de LM Studio
+import openai 
+
 
 
 # Clase para gestionar las solicitudes a la IA
