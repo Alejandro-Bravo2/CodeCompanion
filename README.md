@@ -9,3 +9,9 @@ También me gustaría incoporar un sistema de documentación dicha función lo q
 tu código pero con una documentación en las funciones y métodos y clases ya que esto es una tarea 
 que es aburrida pero es necesaria de esta forma no te tendrías que entrener en hacerlo si no que
 con solo pasarselo al programa te lo estaría resolviendo facilmente.
+
+
+## Video explicando el programa
+```
+https://drive.google.com/file/d/1Qwc4IEX--ge3jJ8VITEW1GMc-umwEL9c/view?usp=sharing
+```

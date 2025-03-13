@@ -172,17 +172,23 @@ def document_readme_button():
     result = ds.generate_documentation(prompt, code)
     _mostrar_resultado("Generar README", result)
 
-PROJECTS_FILE = "projects.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECTS_FILE = os.path.join(BASE_DIR, "projects.json")
 
 def load_projects():
     if os.path.exists(PROJECTS_FILE):
-        with open(PROJECTS_FILE, "r") as file:
-            return json.load(file)
+        with open(PROJECTS_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+            # Asegurar que el dato cargado es una lista
+            if isinstance(data, list):
+                return data
+            else:
+                return []
     return []
 
 def save_projects(projects):
-    with open(PROJECTS_FILE, "w") as file:
-        json.dump(projects, file, indent=4)
+    with open(PROJECTS_FILE, "w", encoding="utf-8") as file:
+        json.dump(projects, file, indent=4, ensure_ascii=False)
 
 def on_activate():
     open_project_window()
