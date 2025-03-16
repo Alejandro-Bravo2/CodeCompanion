@@ -863,33 +863,28 @@ class Ejemplo:
     button_frame.pack(pady=5, padx=5, fill=tk.X)  # Cambiado anchor='w' por fill=tk.X
 
     # Configurar las columnas para que se expandan equitativamente
-    num_buttons = 6  # Incrementado a 6 para incluir 'Pasar a README'
+    num_buttons = 4  # Incrementado a 6 para incluir 'Pasar a README'
     for i in range(num_buttons):
         button_frame.grid_columnconfigure(i, weight=1, uniform="button")
 
-    add_button = tk.Button(button_frame, text="Add Section", command=add_section,
+    add_button = tk.Button(button_frame, text="Agregar Sección", command=add_section,
                            bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
     add_button.grid(row=0, column=0, padx=2, pady=2, sticky='ew')  # Eliminado width=15
 
-    edit_button = tk.Button(button_frame, text="Edit Section", command=edit_section,
+    edit_button = tk.Button(button_frame, text="Editar Sección", command=edit_section,
                             bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
     edit_button.grid(row=0, column=1, padx=2, pady=2, sticky='ew')  # Eliminado width=15
 
-    delete_button = tk.Button(button_frame, text="Delete Section", command=delete_section,
+    delete_button = tk.Button(button_frame, text="Borrar Sección", command=delete_section,
                               bg="#e94560", fg="#ffffff", font=("Courier", 10, "bold"))
     delete_button.grid(row=0, column=2, padx=2, pady=2, sticky='ew')  # Eliminado width=15
 
-    analyze_button = tk.Button(button_frame, text="Analyze Code", command=analyze_code,
-                               bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
-    analyze_button.grid(row=0, column=3, padx=2, pady=2, sticky='ew')  # Eliminado width=15
 
     document_button = tk.Button(button_frame, text="Documentar", command=document_code_button,
                                 bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
-    document_button.grid(row=0, column=4, padx=2, pady=2, sticky='ew')  # Nuevo botón
+    document_button.grid(row=0, column=3, padx=2, pady=2, sticky='ew')  # Nuevo botón
 
-    readme_button = tk.Button(button_frame, text="Pasar a README", command=document_readme_button,
-                              bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
-    readme_button.grid(row=0, column=5, padx=2, pady=2, sticky='ew')  # Nuevo botón
+
 
     refresh_treeview()
 
