@@ -14,7 +14,7 @@ Whether you're tackling a complex feature, trying to understand unfamiliar code,
   * [Prerequisites](#prerequisites)
   * [Cloning the Repository](#cloning-the-repository)
   * [Configuration](#Configure-the-Environment-Variable)
-  * [Installation](#installation)
+  * [Installation](#How-to-Install-Dependencies)
 * [Usage](#usage)
 
   * [Command Line Interface](#command-line-interface)
