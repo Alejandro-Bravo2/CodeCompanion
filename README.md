@@ -65,7 +65,6 @@ Clone the repository to your local machine:
 ```bash
 git clone https://github.com/Alejandro-Bravo2/proyectoDigitalizacion.git
 cd proyectoDigitalizacion
-## Video explaining the program
 ```
 
 ### Configure the Environment Variable
