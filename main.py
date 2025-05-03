@@ -1,896 +1,756 @@
-import tkinter as tk
-from tkinter import simpledialog, ttk, scrolledtext
-import tkinter.messagebox as messagebox 
-import tkinter.font as tkFont
-from pynput import keyboard
+import gradio as gr
 import json
 import os
-import threading
 import ast
 import re
-import openai 
+import openai
+from dotenv import load_dotenv
+from openai import OpenAI
+# Import Iterator is no longer needed for type hinting when not streaming
+# from typing import Iterator, Union
+
+# --- Configuration ---
+# Loads environment variables from a .env file
+load_dotenv()
+
+# Loads the OpenRouter API key and model name from environment variables
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+MODEL_OPENROUTER = os.environ.get("MODEL_OPENROUTER")
+
+# Checks if the API key is configured and shows an error if not
+if not OPENROUTER_API_KEY:
+    print("Error: The OPENROUTER_API_KEY environment variable is not configured.")
+    print("Please set your OpenRouter API key (sk-or-...) before running.")
+    print("Example: export OPENROUTER_API_KEY='sk-or-YOUR_KEY'")
+# Checks if the model name is configured and shows a warning if not
+if not MODEL_OPENROUTER:
+    print("Warning: The MODEL_OPENROUTER environment variable is not configured. Using default model 'meta-llama/llama-3-8b-instruct'.")
 
 
-
-# Clase para gestionar las solicitudes a la IA
+# --- AI Interaction Class ---
 class DeepSeekDocumenter:
+    """
+    Handles interactions with the AI model via OpenRouter for code documentation and README generation.
+    Streaming is disabled in this version.
+    """
     def __init__(self):
+        """
+        Initializes the OpenAI client for the OpenRouter API.
+        Checks for the existence of the API key before initializing the client.
+        """
+        self.client = None
+        # Add an error message if the key is missing from the start
+        if not OPENROUTER_API_KEY:
+             print("Error: The OPENROUTER_API_KEY environment variable is not configured.")
+             print("Please set your OpenRouter API key (sk-or-...) before running.")
+             print("Example: export OPENROUTER_API_KEY='sk-or-YOUR_KEY'")
+             # Do not initialize the client if the key is missing
+             return
+
         try:
-            openai.api_base = "http://localhost:1234/v1"
-            openai.api_key = "llama-3.2-1b-instruct"
-            self.client = openai
+            # Use the openai module directly as a client with explicit base_url and api_key
+            self.client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=OPENROUTER_API_KEY,
+            )
+            # Optional: verify if the connection is valid (might add latency at startup)
+            # print("OpenAI/OpenRouter client initialized successfully.")
+            # self.client.models.list() # This would raise an exception if the key is incorrect
+
         except Exception as e:
-            raise ValueError(f"Error al inicializar OpenAI: {e}")
+            print(f"Error initializing OpenAI (OpenRouter): {e}")
+            # Ensure the client is None if initialization fails
+            self.client = None
 
-    def generate_documentation(self, user_input, code):
+
+    # --- MODIFIED: No longer a generator (removed yield and stream=True) ---
+    def generate_documentation(self, user_input: str, code: str) -> str:
         """
-        Genera documentación del código agregando comentarios claros y concisos en cada función, clase y método.
-        La respuesta contendrá únicamente el código documentado, sin explicaciones adicionales.
+        Generates code documentation by adding comments/docstrings to functions,
+        methods, and classes. Returns the complete response at once.
+
+        Args:
+            user_input (str): Additional description or context provided by the user.
+            code (str): The source code to document.
+
+        Returns:
+            str: The complete documented code or an error message.
         """
+        # Check if the client was successfully initialized
+        if not self.client:
+             # Return the error message directly
+             return "Error: OpenRouter API client not initialized. Please check your API key."
+
+        # Define the maximum context window size (can vary by model)
         max_length = 12000
-        truncated_code = code if len(code) <= max_length else code[:max_length] + "\n... [truncated]"
-        language_note = ""
-        if "package " in code or "class " in code:
-            language_note = "Nota: El código está escrito en Kotlin. "
+        # Simple truncation of the code if it exceeds the maximum size
+        truncated_code = code[:max_length]
+
+        # Basic language detection for hints in the prompt
+        language_hint = ""
+        if re.search(r'^\s*(?:def|async\s+def)\s+\w+\s*\(', code, re.MULTILINE) or re.search(r'^\s*class\s+\w+:', code, re.MULTILINE):
+             language_hint = "The code is Python. Use Python docstrings (`\"\"\"Docstring\"\"\"`)."
+        elif re.search(r'^\s*(?:fun|suspend\s+fun)\s+\w+\s*\(', code, re.MULTILINE) or re.search(r'^\s*class\s+\w+\s*(?:\(|{)', code, re.MULTILINE):
+             language_hint = "The code is Kotlin. Use KDoc (`/** KDoc */`)."
+        elif re.search(r'^\s*function\s+\w+\s*\(', code, re.MULTILINE) or re.search(r'^\s*class\s+\w+\s*{', code, re.MULTILINE) or re.search(r'^\s*const\s+\w+\s*=\s*\(?\s*\w*\s*\)?\s*=>', code, re.MULTILINE):
+             language_hint = "The code is JavaScript. Use JSDoc comments (`/** JSDoc */`) or line comments (`//`)."
+        elif re.search(r'^\s*(?:public|private|protected)?\s*class\s+\w+\s*{', code, re.MULTILINE) or re.search(r'^\s*(?:public|private|protected)?\s*(?:static)?\s*\w+\s+\w+\s*\(', code, re.MULTILINE):
+             language_hint = "The code is Java. Use Javadoc (`/** Javadoc */`) or line comments (`//`)."
+        elif re.search(r'^\s*(?:func|class)\s+\w+', code, re.MULTILINE):
+             language_hint = "The code is Swift. Use documentation comments (`///` or `/** */`)."
+        elif re.search(r'^\s*(?:class|struct)\s+\w+', code, re.MULTILINE) or re.search(r'^\s*\w+\s+\w+::\w+\s*\(', code, re.MULTILINE) or re.search(r'^\s*(?:void|int|string|bool|float|double)\s+\w+\s*\(', code, re.MULTILINE):
+             language_hint = "The code is C++ or C#. Use documentation comments (`///` or `/** */`) or line comments (`//`)."
+        # Add more language hints if needed
+
+        # Build the prompt for the AI model
         prompt = (
-            f"{language_note}"
-            """
-            “Eres un generador de documentación para código Python, kotlin o cualquier lenguaje. Tu tarea es analizar el siguiente código y devolver el mismo código sin interrupciones, pero agregando docstrings a cada función, método y clase. Asegúrate de documentar de manera clara y detallada el propósito de cada elemento, incluyendo la descripción de cada parámetro (con su tipo correspondiente) y, en su caso, el valor de retorno. No incluyas comentarios adicionales fuera de los docstrings. Usa el siguiente ejemplo como guía:
-
-python
-Copiar
-Editar
-def _filtrar_documentacion(self, doc):
-    <<DOC>>
-    Filtra información adicional innecesaria del documento de documentación.
-
-    Args:
-        doc (str): La documentación a filtrar.
-
-    Returns:
-        str: La documentación filtrada, sin espacios al inicio o al final.
-    <<DOC>>
-    return doc.strip()
-
-def _traducir_documentacion(self, doc):
-    <<DOC>>
-    Traduce la documentación al español en caso de ser necesario.
-
-    Se asume que la documentación ya viene en español.
-
-    Args:
-        doc (str): La documentación a traducir.
-
-    Returns:
-        str: La documentación traducida.
-    <<DOC>>
-    return doc
-
-def _mostrar_resultado(title, content, parent=None):
-    <<DOC>>
-    Muestra el contenido proporcionado en una ventana nueva.
-
-    Se crea una ventana hija (Toplevel) con un área de texto desplazable que contiene el contenido.
-
-    Args:
-        title (str): Título de la ventana.
-        content (str): Contenido a mostrar en la ventana.
-        parent (tk.Widget, opcional): Widget padre para la ventana. Si no se especifica, se utiliza el widget raíz predeterminado.
-    <<DOC>>
-    if parent is None:
-        parent = tk._get_default_root()
-    result_window = tk.Toplevel(parent)
-    result_window.title(title)
-    st = scrolledtext.ScrolledText(result_window, width=80, height=30)
-    st.pack(expand=True, fill='both')
-    st.insert(tk.END, content)
-Por favor, documenta todo el código que se te proporcione siguiendo exactamente este formato, sin interrupciones ni explicaciones adicionales, solo el código modificado con los docstrings correspondientes.”
-            """
-            f"{truncated_code}"
-            "\n\nDescripción adicional: " + user_input
+            f"You are a code documentation generator. "
+            f"Your task is to analyze the following code and return ONLY the original code "
+            f"with clear and detailed documentation docstrings/comments added to each function, method, and class."
+            f"Describe the purpose, parameters (including type if evident or assumed), and return value."
+            f"Ensure the documentation is well-formatted according to the detected language conventions."
+            f"DO NOT include explanatory text, introductions, conclusions, or anything that is not the documented code."
+            f"{language_hint}\n\n"
+            f"Code to document:\n```\n{truncated_code}\n```\n"
+            f"Additional user description (if applicable): {user_input}\n\n"
+            "Return only the documented code:"
         )
+        # Define the messages for the conversation with the model
         messages = [
-            {"role": "system", "content": "Eres un asistente útil."},
+            {"role": "system", "content": "You are a helpful programming assistant that only returns documented code."},
             {"role": "user", "content": prompt}
         ]
-        try:
-            completion = self.client.ChatCompletion.create(
-                model="deepseek-r1-llama-8b",
-                messages=messages,
-                temperature=0.7,
-                max_tokens=12000
-            )
-            documented_code = completion.choices[0].message.content
-            return self._traducir_documentacion(self._filtrar_documentacion(documented_code))
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al generar la documentación: {e}")
-            return "Error en la generación de la documentación."
 
-    def _filtrar_documentacion(self, doc):
-        """Filtra información adicional innecesaria."""
+        try:
+            # Use the model specified in the environment variable, or a default
+            model_to_use = MODEL_OPENROUTER if MODEL_OPENROUTER else "meta-llama/llama-3-8b-instruct"
+            completion = self.client.chat.completions.create(
+                model=model_to_use, # Model used
+                messages=messages,
+                temperature=0.2, # Adjust creativity (0.2 is low, focused on precision)
+                max_tokens=12000, # Request max tokens up to context window
+                # stream=False # Removed or set to False
+            )
+
+            # --- MODIFIED: Get the full content directly ---
+            # Check for valid response structure
+            if not completion or not hasattr(completion, 'choices') or not completion.choices:
+                 return "OpenRouter API did not return a valid response (no choices). Please try again or check the model."
+            if not hasattr(completion.choices[0], 'message') or not completion.choices[0].message:
+                 return "OpenRouter API returned an incomplete response (no message). Please try again or check the model."
+            if not hasattr(completion.choices[0].message, 'content') or not completion.choices[0].message.content:
+                 return "OpenRouter API returned an empty response (no content). Please try again or check the model."
+
+            # Get the complete content string
+            documented_code = completion.choices[0].message.content
+
+            # Note: The post-generation filtering and translation methods
+            # (_filter_documentation, _translate_documentation) can be applied here
+            # if needed, as we have the full content. Keeping them commented for now
+            # as the prompt aims for direct output.
+            # processed_code = self._translate_documentation(self._filter_documentation(documented_code))
+            processed_code = documented_code # Use the raw content
+
+            # Check for empty processed content
+            if not processed_code or not processed_code.strip():
+                 return "OpenRouter API did not return documented code after processing. Please try with different code or check the model."
+
+            return processed_code # Return the complete string
+
+        except openai.APIError as e:
+            # Capture and return specific API errors
+            print(f"OpenAI/OpenRouter API Error: {e}")
+            return f"Error generating documentation (API Error): {e}" # Return the error
+        except Exception as e:
+            # Capture and return other unexpected errors
+            print(f"Unexpected error: {e}")
+            return f"Unexpected error during generation: {e}" # Return the error
+
+
+    # --- MODIFIED: No longer a generator (removed yield and stream=True) ---
+    def generate_readme_content(self, user_description: str, code: str, existing_readme: str = "") -> str:
+         """
+         Generates the content of a README.md file based on the code and a description.
+         Returns the complete response at once.
+
+         Args:
+             user_description (str): Additional description or instructions from the user for the README.
+             code (str): The source code of the project for which to generate the README.
+             existing_readme (str, optional): Content of an existing README.md to base upon.
+                                              Defaults to an empty string.
+
+         Returns:
+             str: The complete README.md content or an error message.
+         """
+         # Check if the client was successfully initialized
+         if not self.client:
+             return "Error: OpenRouter API client not initialized. Please check your API key." # Return the error
+
+
+         # Define the maximum context window size and truncate the code
+         max_length = 12000
+         # Use half the context for the code, the other half for the prompt/readme
+         truncated_code = code[:max_length // 2]
+
+         # Build the prompt for the AI model to generate the README
+         prompt = (
+             f"You are an expert README.md file generator in Markdown format."
+             f"Your task is to create a complete and well-structured README.md file for a software project."
+             f"Include standard sections like Title, Project Description, Features, Installation, Usage, Code Structure, Contribution, License, etc."
+             f"Base your content on the following project code and existing README content (if provided)."
+             f"Ensure the README is clear, concise, and easy for other developers to understand."
+             f"Pay close attention to any additional instructions or description provided by the user."
+             f"\n\n--- Existing README.md Content (if any) ---\n{existing_readme}\n"
+             f"\n\n--- Project Code ---\n```\n{truncated_code}\n```\n"
+             f"\n\n--- Additional User Instructions ---\n{user_description}\n"
+             f"\n\n--- New README.md Content (in Markdown) ---"
+             f"\nReturn ONLY the complete README.md content in Markdown format, with no additional text before or after."
+         )
+
+         # Define the messages for the conversation with the model
+         messages = [
+             {"role": "system", "content": "You are an expert README.md file generator in Markdown format and only return Markdown content."},
+             {"role": "user", "content": prompt}
+         ]
+
+         try:
+             # Use the model specified in the environment variable, or a default
+             model_to_use = MODEL_OPENROUTER if MODEL_OPENROUTER else "meta-llama/llama-3-8b-instruct"
+             completion = self.client.chat.completions.create(
+                 model=model_to_use, # Suitable model (consistent with documentation for testing)
+                 messages=messages,
+                 temperature=0.7, # Slightly higher temperature for creativity in README
+                 max_tokens=12000, # Request max tokens
+                 # stream=False # Removed or set to False
+             )
+
+             # --- MODIFIED: Get the full content directly ---
+             # Check for valid response structure
+             if not completion or not hasattr(completion, 'choices') or not completion.choices:
+                  return "OpenRouter API did not return a valid response (no choices). Please try again or check the model."
+             if not hasattr(completion.choices[0], 'message') or not completion.choices[0].message:
+                  return "OpenRouter API returned an incomplete response (no message). Please try again or check the model."
+             if not hasattr(completion.choices[0].message, 'content') or not completion.choices[0].message.content:
+                  return "OpenRouter API returned an empty response (no content). Please try again or check the model."
+
+             readme_content = completion.choices[0].message.content
+
+             # Simple filtering for Markdown code blocks if the AI mistakenly wraps it
+             readme_content = readme_content.strip()
+             if readme_content.startswith("```markdown"):
+                  readme_content = readme_content[len("```markdown"):].strip()
+             if readme_content.endswith("```"):
+                  readme_content = readme_content[:-len("```")].strip()
+
+             # Check for empty processed content
+             if not readme_content or not readme_content.strip():
+                  return "OpenRouter API did not return content for the README. Please try with a different description or check the model."
+
+
+             return readme_content # Return the complete string
+
+         except openai.APIError as e:
+             # Capture and return specific API errors
+             print(f"OpenAI/OpenRouter API Error generating README: {e}")
+             return f"Error generating README (API Error): {e}" # Return the error
+         except Exception as e:
+             # Capture and return other unexpected errors
+             print(f"Unexpected error generating README: {e}")
+             return f"Unexpected error during README generation: {e}" # Return the error
+
+
+    def _filter_documentation(self, doc):
+        """
+        Filters unnecessary additional information that the model might include.
+        (This method is not currently used in the streaming flow).
+        """
+        # The prompt asks for only code, so less filtering is expected to be needed.
+        # A simple strip might suffice, or look for common AI conversational filler.
+        # Also remove markdown code block fences if present
+        doc = doc.strip()
+        if doc.startswith("```") and doc.endswith("```"):
+             # Remove language specifier like ```python
+             doc = re.sub(r"^```[a-zA-Z]*\n", "", doc)
+             doc = re.sub(r"\n```$", "", doc)
         return doc.strip()
 
-    def _traducir_documentacion(self, doc):
-        """Traduce la documentación al español en caso de ser necesario (asumimos que ya viene en español)."""
+
+    def _translate_documentation(self, doc):
+        """
+        Translates the documentation to Spanish if necessary.
+        (This method is not currently used in the streaming flow).
+        """
+        # If the prompt was in Spanish and the target is Spanish, this function might just return the input.
+        # Since we are now prompting in English, this function effectively just returns the input.
         return doc
 
-# Función para mostrar resultados en una única ventana
-def _mostrar_resultado(title, content, parent=None):
-    if parent is None:
-        parent = tk._get_default_root()
-    result_window = tk.Toplevel(parent)
-    result_window.title(title)
-    st = scrolledtext.ScrolledText(result_window, width=80, height=30)
-    st.pack(expand=True, fill='both')
-    st.insert(tk.END, content)
+# --- Code Analysis Classes (Do not need changes for streaming) ---
 
-# Función para analizar código
-def analyze_code():
-    code = simpledialog.askstring("Código a Analizar", "Introduce el código a analizar:")
-    if not code:
-        messagebox.showinfo("Análisis cancelado", "No se proporcionó código para analizar.")
-        return
-    ds = DeepSeekDocumenter()
-    prompt = "Analiza el siguiente código y explica su funcionamiento:"
-    result = ds.generate_documentation(prompt, code)
-    _mostrar_resultado("Análisis de Código", result)
-
-# Función para documentar código
-def document_code_button():
-    code = simpledialog.askstring("Código a Documentar", "Introduce el código a documentar:")
-    if not code:
-        messagebox.showinfo("Documentación cancelada", "No se proporcionó código para documentar.")
-        return
-    ds = DeepSeekDocumenter()
-    prompt = "Documenta el siguiente código, añadiendo comentarios claros a funciones, clases y métodos:"
-    result = ds.generate_documentation(prompt, code)
-    _mostrar_resultado("Documentación del Código", result)
-
-# Función para generar README a partir del archivo main.py y el README existente, si lo hay
-def document_readme_button():
-    try:
-        with open("main.py", "r", encoding="utf-8") as f:
-            code = f.read()
-    except Exception as e:
-        messagebox.showerror("Error al leer archivo", str(e))
-        return
-
-    existing_readme = ""
-    if os.path.exists("README.md"):
-        try:
-            with open("README.md", "r", encoding="utf-8") as rf:
-                existing_readme = rf.read()
-        except Exception as e:
-            messagebox.showwarning("Advertencia", f"No se pudo leer el README existente: {e}")
-
-    ds = DeepSeekDocumenter()
-    prompt = (
-        "Genera una documentación en formato README para este proyecto. "
-        "Utiliza el siguiente código y la información existente como referencia:\n\n"
-        f"{existing_readme}\n\nCódigo:\n"
-    )
-    result = ds.generate_documentation(prompt, code)
-    _mostrar_resultado("Generar README", result)
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECTS_FILE = os.path.join(BASE_DIR, "projects.json")
-
-def load_projects():
-    if os.path.exists(PROJECTS_FILE):
-        with open(PROJECTS_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
-            # Asegurar que el dato cargado es una lista
-            if isinstance(data, list):
-                return data
-            else:
-                return []
-    return []
-
-def save_projects(projects):
-    with open(PROJECTS_FILE, "w", encoding="utf-8") as file:
-        json.dump(projects, file, indent=4, ensure_ascii=False)
-
-def on_activate():
-    open_project_window()
-
-def for_canonical(f):
-    return lambda k: f(l.canonical(k))
-
-def start_listener():
-    with keyboard.GlobalHotKeys({
-            '<ctrl>+<alt>+p': on_activate}) as l:
-        l.join()
-
-class CustomAskString(tk.Toplevel):
-    def __init__(self, parent, title, prompt, initialvalue=''):
-        super().__init__(parent)
-        self.title(title)
-        self.configure(bg="#1a1a2e")
-        self.resizable(False, False)
-        self.result = None
-
-        # Etiqueta de la pregunta
-        tk.Label(self, text=prompt, bg="#1a1a2e", fg="#00ffea", font=("Courier", 12)).pack(padx=10, pady=5)
-
-        # Entrada de texto
-        self.entry = tk.Entry(self, bg="#16213e", fg="#00ffea", font=("Courier", 12))
-        self.entry.pack(padx=10, pady=5)
-        self.entry.insert(0, initialvalue)
-        self.entry.focus_set()
-
-        # Frame para los botones
-        button_frame = tk.Frame(self, bg="#1a1a2e")
-        button_frame.pack(pady=5)
-
-        # Botón OK
-        ok_button = tk.Button(button_frame, text="OK", command=self.on_ok, bg="#0f3460", fg="#ffffff",
-                              font=("Courier", 10, "bold"), width=10)
-        ok_button.pack(side=tk.LEFT, padx=2)
-
-        # Botón Cancel
-        cancel_button = tk.Button(button_frame, text="Cancel", command=self.on_cancel, bg="#e94560", fg="#ffffff",
-                                  font=("Courier", 10, "bold"), width=10)
-        cancel_button.pack(side=tk.LEFT, padx=2)
-
-        # Atajos de teclado
-        self.bind("<Return>", lambda event: self.on_ok())
-        self.bind("<Escape>", lambda event: self.on_cancel())
-
-        # Modalidad de la ventana
-        self.grab_set()
-        self.transient(parent)
-        parent.wait_window(self)
-
-    def on_ok(self):
-        self.result = self.entry.get()
-        self.destroy()
-
-    def on_cancel(self):
-        self.destroy()
-
-def custom_askstring(title, prompt, parent=None, initialvalue=''):
-    dialog = CustomAskString(parent, title, prompt, initialvalue)
-    return dialog.result
-
-class CodeInputDialog(tk.Toplevel):
-    def __init__(self, parent, title, prompt):
-        super().__init__(parent)
-        self.title(title)
-        self.geometry("600x400")
-        self.configure(bg="#1a1a2e")
-        self.result = None
-        self.resizable(False, False)
-
-        # Etiqueta de la pregunta
-        tk.Label(self, text=prompt, bg="#1a1a2e", fg="#00ffea", font=("Courier", 12)).pack(padx=10, pady=10)
-
-        # Área de texto para código
-        self.text_area = scrolledtext.ScrolledText(self, bg="#16213e", fg="#00ffea",
-                                                   font=("Courier", 12), wrap=tk.WORD, height=15, width=70)
-        self.text_area.pack(padx=5, pady=5)
-        self.text_area.focus_set()
-
-        # Frame para los botones
-        button_frame = tk.Frame(self, bg="#1a1a2e")
-        button_frame.pack(pady=5)
-
-        # Botón OK
-        ok_button = tk.Button(button_frame, text="OK", command=self.on_ok, bg="#0f3460", fg="#ffffff",
-                              font=("Courier", 10, "bold"), width=10)
-        ok_button.pack(side=tk.LEFT, padx=2)
-
-        # Botón Cancel
-        cancel_button = tk.Button(button_frame, text="Cancel", command=self.on_cancel, bg="#e94560", fg="#ffffff",
-                                  font=("Courier", 10, "bold"), width=10)
-        cancel_button.pack(side=tk.LEFT, padx=2)
-
-        # Atajos de teclado
-        self.bind("<Return>", lambda event: self.on_ok())
-        self.bind("<Escape>", lambda event: self.on_cancel())
-
-        # Modalidad de la ventana
-        self.grab_set()
-        self.transient(parent)
-        parent.wait_window(self)
-
-    def on_ok(self):
-        self.result = self.text_area.get("1.0", tk.END).strip()
-        self.destroy()
-
-    def on_cancel(self):
-        self.destroy()
-
-class DocumentDialog(tk.Toplevel):
-    def __init__(self, parent, title, prompt):
-        super().__init__(parent)
-        self.title(title)
-        self.geometry("400x200")
-        self.configure(bg="#1a1a2e")
-        self.result = None
-        self.resizable(False, False)
-
-        # Etiqueta de la pregunta
-        tk.Label(self, text=prompt, bg="#1a1a2e", fg="#00ffea", font=("Courier", 12)).pack(padx=10, pady=10)
-
-        # Entrada de texto
-        self.entry = scrolledtext.ScrolledText(self, bg="#16213e", fg="#00ffea",
-                                              font=("Courier", 12), wrap=tk.WORD, height=5, width=40)
-        self.entry.pack(padx=10, pady=5)
-        self.entry.focus_set()
-
-        # Frame para los botones
-        button_frame = tk.Frame(self, bg="#1a1a2e")
-        button_frame.pack(pady=5)
-
-        # Botón OK
-        ok_button = tk.Button(button_frame, text="OK", command=self.on_ok, bg="#0f3460", fg="#ffffff",
-                              font=("Courier", 10, "bold"), width=10)
-        ok_button.pack(side=tk.LEFT, padx=2)
-
-        # Botón Cancel
-        cancel_button = tk.Button(button_frame, text="Cancel", command=self.on_cancel, bg="#e94560", fg="#ffffff",
-                                  font=("Courier", 10, "bold"), width=10)
-        cancel_button.pack(side=tk.LEFT, padx=2)
-
-        # Atajos de teclado
-        self.bind("<Return>", lambda event: self.on_ok())
-        self.bind("<Escape>", lambda event: self.on_cancel())
-
-        # Modalidad de la ventana
-        self.grab_set()
-        self.transient(parent)
-        parent.wait_window(self)
-
-    def on_ok(self):
-        self.result = self.entry.get("1.0", tk.END).strip()
-        self.destroy()
-
-    def on_cancel(self):
-        self.destroy()
-
-class DocumentedCodeWindow(tk.Toplevel):
-    def __init__(self, parent, documented_code):
-        super().__init__(parent)
-        self.title("Código Documentado")
-        self.geometry("800x600")
-        self.configure(bg="#1a1a2e")
-        self.resizable(True, True)
-
-        # Área de texto para mostrar el código documentado
-        self.text_area = scrolledtext.ScrolledText(self, bg="#16213e", fg="#00ffea",
-                                                   font=("Courier", 12), wrap=tk.WORD)
-        self.text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.text_area.insert(tk.END, documented_code)
-        self.text_area.configure(state='disabled')
-
-        # Botón para copiar el código
-        copy_button = tk.Button(self, text="Copiar Código", command=lambda: self.copy_to_clipboard(documented_code),
-                                bg="#0f3460", fg="#ffffff", font=("Courier", 10, "bold"), width=15)
-        copy_button.pack(pady=5)
-
-    def copy_to_clipboard(self, text):
-        self.clipboard_clear()
-        self.clipboard_append(text)
-        messagebox.showinfo("Copiado", "El código documentado ha sido copiado al portapapeles.")
-
-class CodeAnalyzer(tk.Toplevel):
-    def __init__(self, parent, code, language):
-        super().__init__(parent)
-        self.title("Código Analizado")
-        self.geometry("800x600")
-        self.configure(bg="#1a1a2e")
-        self.resizable(True, True)
-        self.language = language.lower()
-
-        # Diccionario para almacenar descripciones de métodos
-        self.method_descriptions = {}
-
-        # Frame para el análisis y detalles
-        self.analysis_frame = tk.Frame(self, bg="#1a1a2e")
-        self.analysis_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # Frame para el reporte del análisis
-        report_frame = tk.Frame(self.analysis_frame, bg="#1a1a2e")
-        report_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0,5))
-
-        # Lista para mostrar clases y métodos
-        self.tree = ttk.Treeview(report_frame, columns=("Type", "Name"), show='headings')
-        self.tree.heading("Type", text="Tipo")
-        self.tree.heading("Name", text="Nombre")
-        self.tree.column("Type", width=100, anchor='center')
-        self.tree.column("Name", width=200, anchor='w')
-        self.tree.pack(fill=tk.BOTH, expand=True)
-
-        # Bind para manejar la selección en el Treeview
-        self.tree.bind("<<TreeviewSelect>>", self.display_method_description)
-
-        # Frame para los detalles del método
-        details_frame = tk.Frame(self.analysis_frame, bg="#1a1a2e")
-        details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5,0))
-
-        details_label = tk.Label(details_frame, text="Detalles del Método:", bg="#1a1a2e", fg="#00ffea",
-                                 font=("Courier", 12, "bold"))
-        details_label.pack(anchor='w')
-
-        self.details_text = scrolledtext.ScrolledText(details_frame, bg="#16213e", fg="#00ffea",
-                                                    font=("Courier", 12), wrap=tk.WORD, height=10, state='disabled')
-        self.details_text.pack(fill=tk.BOTH, expand=True)
-
-        # Botón para cerrar la ventana de análisis
-        close_button = tk.Button(self, text="Cerrar", command=self.destroy,
-                                 bg="#e94560", fg="#ffffff", font=("Courier", 10, "bold"), width=10)
-        close_button.pack(pady=5)
-
-        # Analizar el código y llenar el Treeview
-        self.report = self.analyze_code(code)
-        self.populate_treeview()
-
-    def analyze_code(self, code):
-        try:
-            if self.language == "python":
-                tree = ast.parse(code)
-                analyzer = CodeStructureAnalyzer()
-                analyzer.visit(tree)
-                self.method_descriptions = analyzer.method_descriptions
-                return analyzer.get_report()
-            elif self.language == "kotlin":
-                analyzer = KotlinCodeStructureAnalyzer()
-                analyzer.parse(code)
-                self.method_descriptions = analyzer.method_descriptions
-                return analyzer.get_report()
-            else:
-                return f"Lenguaje '{self.language}' no soportado para análisis."
-        except Exception as e:
-            return f"Error al analizar el código: {e}"
-
-    def populate_treeview(self):
-        # Limpiar el Treeview antes de llenarlo
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-
-        # Insertar clases y métodos
-        for cls in self.method_descriptions.get('classes', []):
-            class_id = self.tree.insert("", "end", values=("Clase", cls['name']))
-            for method in cls['methods']:
-                self.tree.insert(class_id, "end", values=("Método", method['name']))
-
-        # Insertar funciones si existen
-        for func in self.method_descriptions.get('functions', []):
-            self.tree.insert("", "end", values=("Función", func['name']))
-
-    def display_method_description(self, event):
-        selected_item = self.tree.selection()
-        if not selected_item:
-            return
-        item = selected_item[0]
-        item_type, item_name = self.tree.item(item, 'values')
-        
-        description = "No hay descripción disponible."
-        
-        if item_type == "Método":
-            for cls in self.method_descriptions['classes']:
-                for method in cls['methods']:
-                    if method['name'] == item_name:
-                        description = method['description']
-                        args = method.get('args', [])
-                        # Si no hay descripción, la genera la IA
-                        if description.strip() == "No description provided.":
-                            deepseek = DeepSeekDocumenter()
-                            ai_prompt = (f"Genera una breve descripción para el método '{method['name']}' "
-                                         f"que recibe los parámetros: {', '.join(args)}.")
-                            ai_description = deepseek.generate_documentation(ai_prompt, "")
-                            if ai_description and ai_description != "":
-                                description = ai_description
-                                method['description'] = description  # Actualiza para futuras consultas
-                        break
-        elif item_type == "Función":
-            for func in self.method_descriptions['functions']:
-                if func['name'] == item_name:
-                    description = func['description']
-                    args = func.get('args', [])
-                    if description.strip() == "No description provided.":
-                        deepseek = DeepSeekDocumenter()
-                        ai_prompt = (f"Genera una breve descripción para la función '{func['name']}' "
-                                     f"que recibe los parámetros: {', '.join(args)}.")
-                        ai_description = deepseek.generate_documentation(ai_prompt, "")
-                        if ai_description and ai_description != "":
-                            description = ai_description
-                            func['description'] = description
-                    break
-        
-        try:
-            self.details_text.configure(state='normal')
-            self.details_text.delete("1.0", tk.END)
-            self.details_text.insert(tk.END, description)
-            self.details_text.configure(state='disabled')
-        except Exception:
-            pass  # En caso la ventana se haya destruido, ignoramos el error
-
-class CodeStructureAnalyzer(ast.NodeVisitor):
+class PythonCodeStructureAnalyzer(ast.NodeVisitor):
+    """
+    Analyzes the structure of Python code to extract information about classes,
+    functions, and their basic details (names, arguments, docstrings).
+    """
     def __init__(self):
+        """Initializes lists to store class and function information."""
         self.classes = []
         self.functions = []
-        self.method_descriptions = {'classes': [], 'functions': []}
 
     def visit_ClassDef(self, node):
+        """
+        Visits a ClassDef node (class definition) in the Python AST
+        and extracts the class name, its docstring, and the methods it contains.
+        """
         class_info = {
             'name': node.name,
             'methods': []
         }
+        # Get the class docstring
+        class_docstring = ast.get_docstring(node)
+        if class_docstring:
+             class_info['description'] = class_docstring.strip()
+        else:
+             class_info['description'] = "No description provided."
+
+        # Iterate over the elements within the class body to find methods
         for body_item in node.body:
             if isinstance(body_item, ast.FunctionDef):
                 method_info = {
                     'name': body_item.name,
+                    # Extract the names of the method arguments
                     'args': [arg.arg for arg in body_item.args.args],
+                    # Get the method docstring directly
                     'description': ast.get_docstring(body_item) or "No description provided."
                 }
                 class_info['methods'].append(method_info)
+        # Add the class information to the list of found classes
         self.classes.append(class_info)
-        self.method_descriptions['classes'].append(class_info)
+        # Continue visiting child nodes (in case of nested classes, although not fully handled)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
+        """
+        Visits a FunctionDef node (function definition) in the Python AST
+        and extracts the function name, its arguments, and its docstring.
+        Only applies to top-level functions (not class methods).
+        """
         func_info = {
             'name': node.name,
+            # Extract the names of the function arguments
             'args': [arg.arg for arg in node.args.args],
+            # Get the function docstring directly
             'description': ast.get_docstring(node) or "No description provided."
         }
+        # Add the function information to the list of found functions
         self.functions.append(func_info)
-        self.method_descriptions['functions'].append(func_info)
+        # Continue visiting child nodes
         self.generic_visit(node)
 
     def get_report(self):
-        report = ""
+        """
+        Generates a formatted plain text report of the analyzed Python code structure,
+        listing classes, their methods, and top-level functions with their descriptions.
+        """
+        report = "Code Structure Analysis (Python):\n\n"
         if self.classes:
-            report += "Clases\n" + "="*50 + "\n"
+            report += "Classes\n" + "="*50 + "\n"
             for cls in self.classes:
-                report += f"Clase: {cls['name']}\n"
+                report += f"Class: {cls['name']}\n"
+                # Add class docstring if available, truncating if very long
+                if cls.get('description') and cls['description'] != "No description provided.":
+                     report += f"  Description: {cls['description'][:200]}...\n"
                 if cls['methods']:
-                    report += "  Métodos:\n"
+                    report += "  Methods:\n"
                     for method in cls['methods']:
                         args = ", ".join(method['args'])
                         report += f"    - {method['name']}({args})\n"
+                        # Optionally add method description here for the report text, truncating
+                        if method['description'] and method['description'] != "No description provided.":
+                           report += f"      Description: {method['description'][:200]}...\n"
                 report += "\n"
         if self.functions:
-            report += "Funciones\n" + "="*50 + "\n"
+            report += "Top-Level Functions\n" + "="*50 + "\n"
             for func in self.functions:
                 args = ", ".join(func['args'])
                 report += f"  - {func['name']}({args})\n"
+                # Optionally add function description here, truncating
+                if func['description'] and func['description'] != "No description provided.":
+                   report += f"    Description: {func['description'][:200]}...\n"
+
+        # Message if no classes or functions were found
         if not self.classes and not self.functions:
-            report = "No se encontraron clases o funciones en el código proporcionado."
+            report += "No classes or functions found in the provided code."
         return report
 
+
 class KotlinCodeStructureAnalyzer:
+    """
+    Analyzes the structure of Kotlin code (using basic heuristic analysis
+    based on regex) to extract information about classes and functions.
+    """
     def __init__(self):
+        """Initializes lists to store class and function information."""
         self.classes = []
         self.functions = []
-        self.method_descriptions = {'classes': [], 'functions': []}
 
     def parse(self, code):
-        class_pattern = re.compile(r'class\s+(\w+)\s*{')
-        method_pattern = re.compile(r'fun\s+(\w+)\s*\(([^)]*)\)')
-        description_pattern = re.compile(r'/\*\*(.*?)\*/', re.DOTALL)
+        """
+        Parses Kotlin code to extract basic class and function information.
+        Note: This is a simplified parser using regex and heuristics, not a full AST parser.
 
-        current_class = None
+        Args:
+            code (str): The Kotlin source code to analyze.
+        """
+        # Regex patterns to identify classes, functions, and KDoc comments
+        class_pattern = re.compile(r'^\s*class\s+(\w+)', re.MULTILINE)
+        method_pattern = re.compile(r'^\s*fun\s+(\w+)\s*\(([^)]*)\)', re.MULTILINE)
+        # This description pattern looks for multi-line KDoc comments right before fun/class
+        description_pattern = re.compile(r'/\*\*(.*?)\*/\s*$', re.DOTALL | re.MULTILINE)
+
+        current_class_name = None
         lines = code.split('\n')
-        for i, line in enumerate(lines):
+        class_start_line = -1
+
+        # Reset lists for a new analysis
+        self.classes = []
+        self.functions = []
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # Check for class definition
             class_match = class_pattern.search(line)
             if class_match:
-                current_class = class_match.group(1)
-                class_info = {'name': current_class, 'methods': []}
+                current_class_name = class_match.group(1)
+                class_start_line = i
+                class_info = {'name': current_class_name, 'methods': []}
+                # Find description *before* the class line
+                description = "No description provided."
+                # Look back a few lines for a KDoc comment
+                for j in range(i - 1, max(-1, i - 5), -1): # Check up to 5 lines back
+                    desc_match = description_pattern.search(lines[j])
+                    if desc_match:
+                        description = desc_match.group(1).strip()
+                        break
+                class_info['description'] = description
                 self.classes.append(class_info)
-                continue
+                # Methods will be added as found within the class block
 
+            # Check for method definition
             method_match = method_pattern.search(line)
             if method_match:
                 method_name = method_match.group(1)
-                args = method_match.group(2).split(',') if method_match.group(2).strip() else []
-                args = [arg.split(':')[0].strip() for arg in args]
+                # Simple argument extraction (argument name before ':' or '=')
+                args_str = method_match.group(2)
+                args = [arg.split(':')[0].strip().split('=')[0].strip() for arg in args_str.split(',') if arg.strip()] if args_str.strip() else []
+
+                # Find description *before* the method line
                 description = "No description provided."
-                # Buscar comentarios de documentación anteriores
-                if i > 0 and description_pattern.search(lines[i-1]):
-                    description = description_pattern.search(lines[i-1]).group(1).strip()
+                # Look back a few lines for a KDoc comment
+                for j in range(i - 1, max(-1, i - 5), -1): # Check up to 5 lines back
+                    desc_match = description_pattern.search(lines[j])
+                    if desc_match:
+                        description = desc_match.group(1).strip()
+                        break
+
                 method_info = {
                     'name': method_name,
                     'args': args,
                     'description': description
                 }
-                if current_class:
-                    self.classes[-1]['methods'].append(method_info)
-                    self.method_descriptions['classes'].append(self.classes[-1])
+                if current_class_name:
+                    # If inside a class, add the method to that class
+                    # This assumes methods are listed directly under the class definition
+                    for cls in self.classes:
+                        if cls['name'] == current_class_name:
+                            cls['methods'].append(method_info)
+                            break # Class found
                 else:
+                    # If not inside a class, it's a top-level function
                     self.functions.append(method_info)
-                    self.method_descriptions['functions'].append(method_info)
+
+            # Simple logic to detect the end of a class block (might need refinement)
+            # Assuming simple bracket structure { ... } and counting the balance
+            if current_class_name and line.strip() == '}':
+                 brace_balance = 0
+                 # Count braces from the start of the class to the current line
+                 for k in range(class_start_line, i + 1):
+                      brace_balance += lines[k].count('{')
+                      brace_balance -= lines[k].count('}')
+                 # If the balance is 0, we assume it's the end of the current class
+                 if brace_balance == 0:
+                      current_class_name = None
+                      class_start_line = -1
+
+            i += 1 # Move to the next line
+
 
     def get_report(self):
-        report = ""
+        """
+        Generates a formatted plain text report of the analyzed Kotlin code structure,
+        listing classes, their methods, and top-level functions with their descriptions.
+        """
+        report = "Code Structure Analysis (Kotlin):\n\n"
         if self.classes:
-            report += "Clases\n" + "="*50 + "\n"
+            report += "Classes\n" + "="*50 + "\n"
             for cls in self.classes:
-                report += f"Clase: {cls['name']}\n"
+                report += f"Class: {cls['name']}\n"
+                # Add class description if available, truncating
+                if cls.get('description') and cls['description'] != "No description provided.":
+                     report += f"  Description: {cls['description'][:200]}...\n" # Truncate
                 if cls['methods']:
-                    report += "  Métodos:\n"
+                    report += "  Methods:\n"
                     for method in cls['methods']:
                         args = ", ".join(method['args'])
                         report += f"    - {method['name']}({args})\n"
+                        # Add method description if available, truncating
+                        if method['description'] and method['description'] != "No description provided.":
+                             report += f"      Description: {method['description'][:200]}...\n" # Truncate
                 report += "\n"
         if self.functions:
-            report += "Funciones\n" + "="*50 + "\n"
+            report += "Top-Level Functions\n" + "="*50 + "\n"
             for func in self.functions:
                 args = ", ".join(func['args'])
                 report += f"  - {func['name']}({args})\n"
+                # Add function description if available, truncating
+                if func['description'] and func['description'] != "No description provided.":
+                     report += f"    Description: {func['description'][:200]}...\n" # Truncate
+
+        # Message if no classes or functions were found
         if not self.classes and not self.functions:
-            report = "No se encontraron clases o funciones en el código proporcionado."
+            report += "No classes or functions found in the provided code."
         return report
 
-def analyze_code_dialog(parent):
-    dialog = CodeInputDialog(parent, "Analizar Código", "Pega tu código aquí:")
-    code = dialog.result
-    if code:
-        # Preguntar al usuario el lenguaje del código
-        language = custom_askstring("Seleccionar Lenguaje", "Ingresa el lenguaje del código (Python/Kotlin):", parent=parent)
-        if language is None:
-            return  # El usuario canceló la selección
-        if language.lower() not in ["python", "kotlin"]:
-            messagebox.showerror("Error", "Lenguaje no soportado. Por favor, elige Python o Kotlin.")
-            return
-        analyzer = CodeAnalyzer(parent, code, language)
 
-def document_code(parent, documenter):
-    dialog = DocumentDialog(parent, "Documentar Código", "Ingresa una breve descripción (opcional):")
-    user_input = dialog.result
-    if user_input is not None:
-        code_dialog = CodeInputDialog(parent, "Código a Documentar", "Pega el código que deseas documentar aquí:")
-        code_to_document = code_dialog.result
-        if code_to_document:
-            documented_code = documenter.generate_documentation(user_input, code_to_document)
-            if "Error al generar documentación" not in documented_code: #Comprobar si hubo error antes de mostrar la ventana
-                doc_window = DocumentedCodeWindow(parent, documented_code)
+# --- Gradio Interface Functions ---
 
-def document_readme(parent, documenter):
-    dialog = DocumentDialog(parent, "Generar README", "Ingresa una breve descripción (opcional):")
-    user_input = dialog.result
-    if user_input is not None:
-        code_dialog = CodeInputDialog(parent, "Código para README", "Pega el código para generar el README:")
-        code_to_document = code_dialog.result
-        if code_to_document:
-            readme_doc = documenter.generate_readme(user_input, code_to_document)
-            if "Error al generar README" not in readme_doc:
-                doc_window = DocumentedCodeWindow(parent, readme_doc)
+# Initialize the AI documenter instance
+ai_documenter_instance = DeepSeekDocumenter()
 
-def analyze_code():
-    # Solicitar al usuario que ingrese el código a analizar
-    code = simpledialog.askstring("Código a Analizar", "Introduce el código a analizar:")
+# --- MODIFIED: No longer a generator (removed yield from) ---
+def gradio_document_code(description: str, code: str) -> str:
+    """
+    Gradio function to handle the code documentation task.
+    Calls the documentation method from the DeepSeekDocumenter class and returns the complete output.
+
+    Args:
+        description (str): Additional description provided by the user.
+        code (str): The code to document.
+
+    Returns:
+        str: The complete documented code or an error message.
+    """
     if not code:
-        messagebox.showinfo("Análisis cancelado", "No se proporcionó código para analizar.")
-        return
-    ds = DeepSeekDocumenter()
-    prompt = "Analiza el siguiente código y explica su funcionamiento:"
-    documentation = ds.generate_documentation(prompt, code)
-    # Mostrar el resultado en una ventana emergente
-    result_window = tk.Toplevel(root)
-    result_window.title("Análisis de Código")
-    st = scrolledtext.ScrolledText(result_window, width=80, height=30)
-    st.pack(expand=True, fill='both')
-    st.insert(tk.END, documentation)
+        return "Please enter the code to document."
 
-def open_project_window():
-    root = tk.Tk()
-    root.title("Project Organizer")
-    root.geometry("800x600")  # Ajustado para mejor visibilidad
-    root.configure(bg="#1a1a2e")  # Fondo oscuro
+    # Call the documentation method and return its complete output
+    return ai_documenter_instance.generate_documentation(description, code)
 
-    projects = load_projects()
 
-    # Crear un Frame central para centrar los widgets con márgenes reducidos
-    main_frame = tk.Frame(root, bg="#1a1a2e")
-    main_frame.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)  # Reducido de 20 a 5
+def gradio_analyze_code(code: str, language: str) -> str:
+    """
+    Gradio function to handle the code analysis task.
+    Uses the structure analysis classes based on the selected language.
 
-    # Aplicar estilo ciberpunk
-    style = ttk.Style()
-    style.theme_use("default")
+    Args:
+        code (str): The code to analyze.
+        language (str): The code language (e.g., "Python", "Kotlin").
 
-    # Configurar el estilo para Treeview
-    style.configure("Treeview",
-                    background="#16213e",
-                    foreground="#00ffea",
-                    fieldbackground="#16213e",
-                    font=("Courier", 12))
-    style.configure("Treeview.Heading",
-                    background="#0f3460",
-                    foreground="#ffffff",
-                    font=("Courier", 12, "bold"))
-
-    # Configurar el estilo para el estado 'active' y 'selected'
-    style.map("Treeview",
-              background=[('active', '#0f3460'), ('selected', '#e94560')],
-              foreground=[('active', '#00ffea'), ('selected', '#ffffff')])
-
-    # Configurar el Treeview
-    columns = ("Section", "Description", "State")
-    tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=15)
-    tree.heading("Section", text="Section")
-    tree.heading("Description", text="Description")
-    tree.heading("State", text="State")
-
-    # Establecer la alineación centrada
-    tree.column("Section", anchor="center", width=150)
-    tree.column("Description", anchor="center", width=350)
-    tree.column("State", anchor="center", width=150)
-
-    # Aplicar estilo al Treeview
-    tree.configure(selectmode='browse')
-    tree.pack(pady=5, padx=5, fill=tk.BOTH, expand=True)  # Reducido de pady=10 a 5 y agregado fill y expand
-
-    def add_section():
-        section = custom_askstring("Añadir Sección", "Ingresa el nombre de la nueva sección:", parent=root)
-        if section:
-            description = custom_askstring("Añadir Descripción", "Ingresa la descripción:", parent=root)
-            state = custom_askstring("Añadir Estado", "Ingresa el estado (no empezado, en progreso, finalizado):",
-                                     parent=root)
-            if state not in ["no empezado", "en progreso", "finalizado"]:
-                state = "no empezado"  # Valor por defecto si la entrada es inválida
-            projects.append({
-                "section": section,
-                "description": description,
-                "state": state
-            })
-            save_projects(projects)
-            refresh_treeview()
-
-    def edit_section():
-        selected = tree.selection()
-        if not selected:
-            messagebox.showwarning("Advertencia", "No has seleccionado ninguna sección para editar.")
-            return
-        item = selected[0]
-        index = tree.index(item)
-        project = projects[index]
-        description = custom_askstring("Modificar Descripción", "Modifica la descripción:",
-                                       parent=root, initialvalue=project['description'])
-        if description is not None:
-            project['description'] = description
-        state = custom_askstring("Modificar Estado", "Modifica el estado (no empezado, en progreso, finalizado):",
-                                 parent=root, initialvalue=project['state'])
-        if state in ["no empezado", "en progreso", "finalizado"]:
-            project['state'] = state
-        save_projects(projects)
-        refresh_treeview()
-
-    def delete_section():
-        selected = tree.selection()
-        if not selected:
-            messagebox.showwarning("Advertencia", "No has seleccionado ninguna sección para borrar.")
-            return
-        item = selected[0]
-        index = tree.index(item)
-        confirm = messagebox.askyesno("Confirmar Borrado", "¿Estás seguro de que deseas borrar esta sección?")
-        if confirm:
-            del projects[index]
-            save_projects(projects)
-            refresh_treeview()
-
-    def analyze_code():
-        # Solicitar al usuario que ingrese el código a analizar
-        code = simpledialog.askstring("Código a Analizar", "Introduce el código a analizar:")
-        if not code:
-            messagebox.showinfo("Análisis cancelado", "No se proporcionó código para analizar.")
-            return
-        ds = DeepSeekDocumenter()
-        prompt = "Analiza el siguiente código y explica su funcionamiento:"
-        documentation = ds.generate_documentation(prompt, code)
-        # Mostrar el resultado en una ventana emergente
-        result_window = tk.Toplevel(root)
-        result_window.title("Análisis de Código")
-        st = scrolledtext.ScrolledText(result_window, width=80, height=30)
-        st.pack(expand=True, fill='both')
-        st.insert(tk.END, documentation)
+    Returns:
+        str: A report of the code structure or an error message.
+    """
+    if not code:
+        return "Please enter the code to analyze."
+    if not language:
+        return "Please select the code language."
 
     try:
-        documenter = DeepSeekDocumenter()  # Inicializa la clase aquí
-    except ValueError as e:
-        messagebox.showerror("Error de inicialización", str(e))
-        return  # Sale de la función si hay un error en la inicialización
-
-    def document_code_button():
-        """
-        Solicita al usuario ingresar el código a documentar.
-        Si se proporciona el código, se realiza una única llamada a la IA para generar la documentación.
-        Si no se ingresa nada, cancela la operación sin abrir múltiples diálogos.
-        """
-        code = simpledialog.askstring("Código a Documentar", "Introduce el código a documentar:")
-        if not code:
-            messagebox.showinfo("Documentación cancelada", "No se proporcionó código para documentar.")
-            return
-        ds = DeepSeekDocumenter()
-        prompt = "Documenta el siguiente código, añadiendo comentarios claros a funciones, clases y métodos:"
-        documentation = ds.generate_documentation(prompt, code)
-        _mostrar_resultado("Documentación del Código", documentation)
-
-    def document_readme_button():
-        try:
-            with open("main.py", "r") as f:
-                code = f.read()
-        except Exception as e:
-            messagebox.showerror("Error al leer archivo", str(e))
-            return
-        existing_readme = ""
-        if os.path.exists("README.md"):
-            with open("README.md", "r") as rf:
-                existing_readme = rf.read()
-        ds = DeepSeekDocumenter()
-        prompt = ("Genera una documentación en formato README para este proyecto. "
-                  "Utiliza el siguiente código y la información existente como referencia:\n\n" 
-                  f"{existing_readme}\n\nCódigo:\n")
-        documentation = ds.generate_documentation(prompt, code)
-        # Mostrar el README generado en una ventana emergente para revisión
-        result_window = tk.Toplevel(root)
-        result_window.title("Generar README")
-        st = scrolledtext.ScrolledText(result_window, width=80, height=30)
-        st.pack(expand=True, fill='both')
-        st.insert(tk.END, documentation)
-
-    def generate_documentation_placeholder(user_input, code):
-        # Placeholder para la generación de documentación
-        # Implementa aquí la integración con una API de IA como OpenAI
-        return """
-# Documentación Generada Automáticamente
-
-# Descripción: {}
-
-class Ejemplo:
-    def metodo_ejemplo(self, parametro):
-        \"\"\"
-        Este método realiza una operación importante.
-        
-        Parámetros:
-            parametro (tipo): Descripción del parámetro.
-        
-        Retorna:
-            tipo: Descripción del valor retornado.
-        \"\"\"
-        pass
-""".format(user_input if user_input else "Descripción automática generada.")
-
-    def refresh_treeview():
-        for item in tree.get_children():
-            tree.delete(item)
-        for project in projects:
-            tree.insert("", "end", values=(project['section'], project['description'], project['state']))
-
-    # Frame para los botones con márgenes reducidos
-    button_frame = tk.Frame(main_frame, bg="#1a1a2e")
-    button_frame.pack(pady=5, padx=5, fill=tk.X)  # Cambiado anchor='w' por fill=tk.X
-
-    # Configurar las columnas para que se expandan equitativamente
-    num_buttons = 4  # Incrementado a 6 para incluir 'Pasar a README'
-    for i in range(num_buttons):
-        button_frame.grid_columnconfigure(i, weight=1, uniform="button")
-
-    add_button = tk.Button(button_frame, text="Agregar Sección", command=add_section,
-                           bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
-    add_button.grid(row=0, column=0, padx=2, pady=2, sticky='ew')  # Eliminado width=15
-
-    edit_button = tk.Button(button_frame, text="Editar Sección", command=edit_section,
-                            bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
-    edit_button.grid(row=0, column=1, padx=2, pady=2, sticky='ew')  # Eliminado width=15
-
-    delete_button = tk.Button(button_frame, text="Borrar Sección", command=delete_section,
-                              bg="#e94560", fg="#ffffff", font=("Courier", 10, "bold"))
-    delete_button.grid(row=0, column=2, padx=2, pady=2, sticky='ew')  # Eliminado width=15
+        if language.lower() == "python":
+            analyzer = PythonCodeStructureAnalyzer()
+            tree = ast.parse(code) # Parse the Python code into an Abstract Syntax Tree (AST)
+            analyzer.visit(tree) # Visit the AST to extract information
+            report = analyzer.get_report() # Get the formatted report
+        elif language.lower() == "kotlin":
+            analyzer = KotlinCodeStructureAnalyzer()
+            analyzer.parse(code) # Use the heuristic parser for Kotlin
+            report = analyzer.get_report() # Get the formatted report
+        else:
+            report = f"Error: Language '{language}' not supported for analysis."
+        return report
+    except Exception as e:
+        # Capture errors during analysis (e.g., syntax errors)
+        return f"Error during code analysis: {e}"
 
 
-    document_button = tk.Button(button_frame, text="Documentar", command=document_code_button,
-                                bg="#0f3460", fg="#00ffea", font=("Courier", 10, "bold"))
-    document_button.grid(row=0, column=3, padx=2, pady=2, sticky='ew')  # Nuevo botón
+# --- MODIFIED: No longer a generator (removed yield from) ---
+def gradio_generate_readme(description: str, code_for_readme_input: str) -> str:
+    """
+    Gradio function to handle the README.md generation task.
+    Reads 'main.py' or uses the input code, reads an existing README if it exists,
+    and calls the README generator from the DeepSeekDocumenter class, returning the complete response.
+
+    Args:
+        description (str): Additional description or instructions for the README.
+        code_for_readme_input (str): Optional code pasted by the user if not using main.py.
+
+    Returns:
+        str: The complete generated README.md or an error message.
+    """
+    main_py_code = ""
+    readme_content = ""
+
+    try:
+        # Get the directory of the current script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        main_py_path = os.path.join(script_dir, "main.py")
+        readme_path = os.path.join(script_dir, "README.md")
+
+        # Try to read main.py first
+        if os.path.exists(main_py_path):
+            with open(main_py_path, "r", encoding="utf-8") as f:
+                main_py_code = f.read()
+        elif code_for_readme_input:
+             # If main.py does not exist, use the code from the text field
+             main_py_code = code_for_readme_input
+        else:
+            # If there is no main.py and no code in the field, return an error
+            return "Error: 'main.py' not found and no code provided in the text field."
 
 
+        # Try to read the existing README.md
+        if os.path.exists(readme_path):
+            try:
+                with open(readme_path, "r", encoding="utf-8") as rf:
+                    readme_content = rf.read()
+            except Exception as e:
+                # You can print a warning message to the console if you want
+                print(f"Warning: Could not read existing README ({e}).")
+                # Continue without existing README content
 
-    refresh_treeview()
 
-    root.mainloop()
+    except Exception as e:
+        # Capture errors during file reading
+        return f"Error reading files for README generation: {e}"
 
+    # Call the DeepSeekDocumenter class generator and return its complete output
+    return ai_documenter_instance.generate_readme_content(
+        user_description=description,
+        code=main_py_code, # Pass the read code (or from input)
+        existing_readme=readme_content # Pass the existing README content
+    )
+
+
+# --- Gradio Interface Definition ---
+
+# Create a main block for the Gradio interface
+with gr.Blocks() as demo:
+    # Main application title
+    gr.Markdown("# AI Code Assistant with OpenRouter")
+    # Descriptive subtitle
+    gr.Markdown("Document, analyze code, and generate READMEs using models via OpenRouter.ai.")
+
+    # Tab for Documenting Code
+    with gr.Tab("Document Code"): # Tab title
+        gr.Markdown("## Document Code") # Section title
+        # Textbox for additional description
+        doc_description_input = gr.Textbox(
+            label="Additional Description (Optional)", # Label
+            placeholder="e.g., This code manages the user database.", # Placeholder
+            lines=2
+        )
+        # Textbox to paste source code
+        code_input_doc = gr.Textbox(
+            label="Paste Your Code Here", # Label
+            lines=20,
+            placeholder="class MyClass:\n    def my_method(self):...", # Placeholder
+            show_copy_button=True # Show copy button
+        )
+        # Button to start documentation
+        document_button = gr.Button("Document Code") # Button text
+        # Textbox to display documented code (non-interactive)
+        documented_code_output = gr.Textbox(
+            label="Documented Code", # Label
+            lines=20,
+            interactive=False, # Not editable by the user
+            show_copy_button=True # Show copy button
+        )
+        # Configure the button action: calls the gradio_document_code function
+        # This function now returns a single string, so Gradio will display it when ready
+        document_button.click(
+            fn=gradio_document_code,
+            inputs=[doc_description_input, code_input_doc],
+            outputs=documented_code_output
+        )
+
+    # Tab for Analyzing Code
+    with gr.Tab("Analyze Code"): # Tab title
+        gr.Markdown("## Analyze Code") # Section title
+        # Textbox to paste code to analyze
+        code_input_analyze = gr.Textbox(
+            label="Paste Your Code Here", # Label
+            lines=20,
+            placeholder="class MyClass:\n    fun myMethod() {...}", # Placeholder
+             show_copy_button=True # Show copy button
+        )
+        # Radio buttons to select the code language
+        language_select = gr.Radio(
+            ["Python", "Kotlin", "JavaScript", "Java", "Swift", "C++ / C#"], # Language options (kept as names)
+            label="Code Language", # Label
+            value="Python" # Default selected value
+        )
+        # Button to start analysis
+        analyze_button = gr.Button("Analyze Code") # Button text
+        # Textbox to display the analysis report (non-interactive)
+        analysis_output = gr.Textbox(
+            label="Code Analysis Report", # Label
+            lines=20,
+            interactive=False, # Not editable by the user
+            show_copy_button=True # Show copy button
+        )
+        # Configure the button action: calls the gradio_analyze_code function
+        # This function does not use streaming, no changes needed here.
+        analyze_button.click(
+            fn=gradio_analyze_code,
+            inputs=[code_input_analyze, language_select],
+            outputs=analysis_output
+        )
+
+    # Tab for Generating README
+    with gr.Tab("Generate README"): # Tab title
+        gr.Markdown("## Generate README") # Section title
+        # Textbox for additional description/instructions for the README
+        readme_description_input = gr.Textbox(
+            label="Additional Description / Instructions for README (Optional)", # Label
+            placeholder="e.g., Focus on the 'Installation' section.", # Placeholder
+            lines=2
+        )
+        # Optional textbox to paste code if main.py is not used
+        code_input_readme = gr.Textbox(
+            label="Paste Code Here (if not using main.py)", # Label
+            lines=10,
+            placeholder="Optional: Paste code if 'main.py' doesn't exist or you want to include code from another file.", # Placeholder
+            show_copy_button=True # Show copy button
+        )
+        # Button to start README generation
+        generate_readme_button = gr.Button("Generate README") # Button text
+        # Textbox to display the generated README (non-interactive)
+        readme_output = gr.Textbox(
+            label="Generated README (Markdown Format)", # Label
+            lines=20,
+            interactive=False, # Not editable by the user
+            show_copy_button=True # Show copy button
+        )
+        # Configure the button action: calls the gradio_generate_readme function
+        # This function now returns a single string, so Gradio will display it when ready
+        generate_readme_button.click(
+            fn=gradio_generate_readme,
+            inputs=[readme_description_input, code_input_readme],
+            outputs=readme_output
+        )
+
+# --- Launch the Gradio App ---
+# When the script is executed directly
 if __name__ == "__main__":
-    listener_thread = threading.Thread(target=start_listener, daemon=True)
-    listener_thread.start()
-    open_project_window()
+    # Launches the Gradio interface. share=False to not share publicly.
+    demo.launch(share=False)

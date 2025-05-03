@@ -1,0 +1,4 @@
+gradio==5.29.0
+openai==1.77.0
+python-dotenv==1.1.0
+urllib3==1.26.20
