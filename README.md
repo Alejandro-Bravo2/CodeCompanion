@@ -129,6 +129,3 @@ python3 main.py
 
 [Demo video of the program](https://drive.google.com/file/d/1ci-XAUK8N_b22Rk7IEg9hNaVzkRXXqxn/view?usp=sharing)
 
----
-
-¿Quieres que también traduzca las secciones de "Uso", "Ideas para futuras mejoras", etc., si están disponibles?
