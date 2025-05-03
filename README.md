@@ -20,7 +20,7 @@ Whether you're tackling a complex feature, trying to understand unfamiliar code,
   * [Command Line Interface](#command-line-interface)
 * [Ideas for Future Development](#ideas-for-future-development)
 * [License](#license)
-* [Contributing](#contributing)
+* [Contributing](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/blob/main/CONTRIBUTING.md)
 
 ## Motivation
 
