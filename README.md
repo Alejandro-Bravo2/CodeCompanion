@@ -17,8 +17,7 @@ Whether you're tackling a complex feature, trying to understand unfamiliar code,
   * [Installation](#How-to-Install-Dependencies)
 * [Usage](#usage)
 
-  * [Command Line Interface](#command-line-interface)
-* [Ideas for Future Development](#ideas-for-future-development)
+  * [Demo video](#Demo-Video-of-the-Program-in-Action)
 * [License](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/blob/main/LICENSE)
 * [Contributing](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/blob/main/CONTRIBUTING.md)
 
