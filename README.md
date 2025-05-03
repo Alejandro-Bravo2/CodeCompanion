@@ -15,7 +15,7 @@ Whether you're tackling a complex feature, trying to understand unfamiliar code,
   * [Cloning the Repository](#cloning-the-repository)
   * [Configuration](#Configure-the-Environment-Variable)
   * [Installation](#How-to-Install-Dependencies)
-* [Usage](#usage)
+* [Usage](#Demo-Video-of-the-Program-in-Action)
 
   * [Demo video](#Demo-Video-of-the-Program-in-Action)
 * [License](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/blob/main/LICENSE)
