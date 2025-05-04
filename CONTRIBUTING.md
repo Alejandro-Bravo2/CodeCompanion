@@ -57,7 +57,7 @@ A good bug report shouldn't leave others needing to chase you up for more inform
 
 #### How Do I Submit a Good Bug Report?
 
-> Do not report security-related issues, vulnerabilities, or bugs with sensitive information in public forums. Instead, report these issues privately by contacting the project maintainers (you should add an email address or private contact method here).
+> Do not report security-related issues, vulnerabilities, or bugs with sensitive information in public forums. Instead, report these issues privately by contacting the project maintainers `alejandrobravocalderon@gmail.com`
 
 We use GitHub issues to track bugs and errors. If you run into an issue with the project:
 
