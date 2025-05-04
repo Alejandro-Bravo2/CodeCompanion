@@ -136,4 +136,4 @@ Contributions to documentation are welcome! Well-documented code is easier to un
 By contributing to CodeCompanion, you agree that your contributions will be licensed under the MIT License (or the license that applies to your project).
 
 
-Remember to replace the placeholder `(you should add an email address or private contact method here)` in the "Reporting Bugs" section with the actual private contact method for security issues. Also, confirm the license in the "License" section is correct for your project.
+Remember to replace the placeholder `alejandrobravocalderon@gmail.com` in the "Reporting Bugs" section with the actual private contact method for security issues. Also, confirm the license in the "License" section is correct for your project.
