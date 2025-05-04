@@ -14,12 +14,12 @@ All types of contributions are encouraged and valued, whether it's code, documen
 
 - [I Have a Question](#i-have-a-question)
 - [I Want To Contribute](#i-want-to-contribute)
-  - [Reporting Bugs](#reporting-bugs)
-  - [Suggesting Enhancements](#suggesting-enhancements)
-  - [Your First Code Contribution](#your-first-code-contribution)
-  - [Improving The Documentation](#improving-the-documentation)
+  - [Reporting Bugs](#reporting-bugs)
+  - [Suggesting Enhancements](#suggesting-enhancements)
+  - [Your First Code Contribution](#your-first-code-contribution)
+  - [Improving The Documentation](#improving-the-documentation)
 - [Styleguides](#styleguides)
-  - [Commit Messages](#commit-messages)
+  - [Commit Messages](#commit-messages)
 - [License](#license)
 
 ## I Have a Question
@@ -50,14 +50,14 @@ A good bug report shouldn't leave others needing to chase you up for more inform
 - Verify that your issue is not due to misconfiguration or environmental issues. Make sure you have read the [documentation](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/blob/main/README.md).
 - Check if the issue has already been reported by searching the [bug tracker](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/issues?q=label%3Abug).
 - Gather as much information as possible about the bug:
-  - Stack trace (if applicable)
-  - OS, platform, and version (Windows, Linux, macOS, etc.)
-  - Python version and any relevant package versions
-  - Steps to reliably reproduce the issue
+  - Stack trace (if applicable)
+  - OS, platform, and version (Windows, Linux, macOS, etc.)
+  - Python version and any relevant package versions
+  - Steps to reliably reproduce the issue
 
 #### How Do I Submit a Good Bug Report?
 
-> Do not report security-related issues, vulnerabilities, or bugs with sensitive information in public forums. Instead, report these issues privately by contacting the project maintainers `alejandrobravocalderon@gmail.com`
+> Do not report security-related issues, vulnerabilities, or bugs with sensitive information in public forums. Instead, report these issues privately by contacting the project maintainers at alejandrobravocalderon@gmail.com.
 
 We use GitHub issues to track bugs and errors. If you run into an issue with the project:
 
@@ -79,7 +79,7 @@ This section guides you through submitting an enhancement suggestion for CodeCom
 
 - Ensure you are using the latest version.
 - Check the [documentation](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/blob/main/README.md) to see if your suggestion is already supported.
-- Search the [issue tracker](https://github.com/Alejandro-Brajo2/proyectoDigitalizacion/issues) to see if the enhancement has already been suggested. If so, add a comment to the existing issue instead of opening a new one.
+- Search the [issue tracker](https://github.com/Alejandro-Bravo2/proyectoDigitalizacion/issues) to see if the enhancement has already been suggested. If so, add a comment to the existing issue instead of opening a new one.
 - Make sure your suggestion aligns with the scope and aims of the project. It's important to suggest features that will be beneficial to the majority of users.
 
 #### How Do I Submit a Good Enhancement Suggestion?
@@ -133,7 +133,4 @@ Contributions to documentation are welcome! Well-documented code is easier to un
 
 ## License
 
-By contributing to CodeCompanion, you agree that your contributions will be licensed under the MIT License (or the license that applies to your project).
-
-
-Remember to replace the placeholder `alejandrobravocalderon@gmail.com` in the "Reporting Bugs" section with the actual private contact method for security issues. Also, confirm the license in the "License" section is correct for your project.
+By contributing to CodeCompanion, you agree that your contributions will be licensed under the MIT License.
