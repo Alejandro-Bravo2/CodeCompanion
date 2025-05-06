@@ -6,8 +6,7 @@ import re
 import openai
 from dotenv import load_dotenv
 from openai import OpenAI
-# Import Iterator is no longer needed for type hinting when not streaming
-# from typing import Iterator, Union
+
 
 # --- Configuration ---
 # Loads environment variables from a .env file
